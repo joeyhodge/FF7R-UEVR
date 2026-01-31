@@ -1,5 +1,6 @@
 #include <optional>
 #include <mutex>
+#include <string>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_sinks.h>
 
@@ -283,7 +284,7 @@ public:
 
         API::RenderTargetPoolHook::activate();
 
-        auto rt = API::RenderTargetPoolHook::get_render_target(L"InGameUIRenderTarget");
+        auto rt = find_ui_render_target();
 
         if (rt != nullptr) {
             replace_ingame_ui_render_target(rt);
@@ -367,6 +368,28 @@ private:
     std::unique_ptr<DirectX::DX12::GraphicsMemory> m_graphics_memory{};
     d3d12::CommandContext m_d3d12_commands[3]{};
     d3d12::TextureContext m_d3d12_ui_tex{};
+    std::wstring m_last_ui_target_name{};
+
+    API::IPooledRenderTarget* find_ui_render_target() {
+        static const std::wstring k_ui_render_target_names[] = {
+            L"InGameUIRenderTarget",
+            L"U_RenderTexture",
+            L"U_DynamicTexture",
+            L"OffscreenTexture",
+        };
+
+        for (const auto& name : k_ui_render_target_names) {
+            if (auto rt = API::RenderTargetPoolHook::get_render_target(name); rt != nullptr) {
+                if (m_last_ui_target_name != name) {
+                    m_last_ui_target_name = name;
+                    API::get()->log_info("FF7Plugin: Using UI render target '%ls'", name.c_str());
+                }
+                return rt;
+            }
+        }
+
+        return nullptr;
+    }
 
 
     void init_d3d12() {
