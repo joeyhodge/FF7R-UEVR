@@ -231,8 +231,7 @@ public:
         m_cvars.r_InGameUI_FixedHeight = console->find_variable(L"r.InGameUI.FixedHeight");
         m_cvars.r_InGameUI_FixedWidth = console->find_variable(L"r.InGameUI.FixedWidth");
         m_cvars.slate_draw_to_vr_render_target = console->find_variable(L"Slate.DrawToVRRenderTarget");
-        m_cvars.initialized = m_cvars.r_InGameUI_FixedHeight != nullptr && 
-                              m_cvars.r_InGameUI_FixedWidth != nullptr;
+        m_cvars.initialized = true;
 
         return m_cvars.initialized;
     }
@@ -245,6 +244,11 @@ public:
         const auto vr = API::get()->param()->vr;
         const auto is_hmd_active = vr->is_hmd_active();
 
+        if (!m_logged_pre_viewport) {
+            m_logged_pre_viewport = true;
+            API::get()->log_info("FF7Plugin: on_pre_viewport_client_draw");
+        }
+
         if (is_hmd_active) {
             const auto w = (int32_t)vr->get_ui_width();
             const auto h = (int32_t)vr->get_ui_height();
@@ -254,14 +258,16 @@ public:
             }
 
             // TODO: Figure out why this crashes DX12
-            if (m_cvars.r_InGameUI_FixedWidth->get_int() != w - 1) {
-                m_cvars.r_InGameUI_FixedWidth->set(w - 1);
-                m_cvars.dirty = true;
-            }
+            if (m_cvars.r_InGameUI_FixedWidth != nullptr && m_cvars.r_InGameUI_FixedHeight != nullptr) {
+                if (m_cvars.r_InGameUI_FixedWidth->get_int() != w - 1) {
+                    m_cvars.r_InGameUI_FixedWidth->set(w - 1);
+                    m_cvars.dirty = true;
+                }
 
-            if (m_cvars.r_InGameUI_FixedHeight->get_int() != h - 1) {
-                m_cvars.r_InGameUI_FixedHeight->set(h - 1);
-                m_cvars.dirty = true;
+                if (m_cvars.r_InGameUI_FixedHeight->get_int() != h - 1) {
+                    m_cvars.r_InGameUI_FixedHeight->set(h - 1);
+                    m_cvars.dirty = true;
+                }
             }
 
             if (m_cvars.slate_draw_to_vr_render_target != nullptr && m_cvars.slate_draw_to_vr_render_target->get_int() != 1) {
@@ -275,8 +281,11 @@ public:
             }
         } else {
             if (m_cvars.dirty) {
-                m_cvars.r_InGameUI_FixedWidth->set(0);
-                m_cvars.r_InGameUI_FixedHeight->set(0);
+                if (m_cvars.r_InGameUI_FixedWidth != nullptr && m_cvars.r_InGameUI_FixedHeight != nullptr) {
+                    m_cvars.r_InGameUI_FixedWidth->set(0);
+                    m_cvars.r_InGameUI_FixedHeight->set(0);
+                }
+
                 m_cvars.dirty = false;
             }
 
@@ -294,6 +303,11 @@ public:
         }
 
         API::RenderTargetPoolHook::activate();
+
+        if (!m_logged_pre_slate) {
+            m_logged_pre_slate = true;
+            API::get()->log_info("FF7Plugin: on_pre_slate_draw_window");
+        }
 
         auto rt = find_ui_render_target();
 
@@ -382,6 +396,8 @@ private:
     d3d12::CommandContext m_d3d12_commands[3]{};
     d3d12::TextureContext m_d3d12_ui_tex{};
     std::wstring m_last_ui_target_name{};
+    bool m_logged_pre_viewport{false};
+    bool m_logged_pre_slate{false};
 
     API::IPooledRenderTarget* find_ui_render_target() {
         static const std::wstring k_ui_render_target_names[] = {
