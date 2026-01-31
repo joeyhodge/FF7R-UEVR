@@ -408,7 +408,7 @@ private:
         };
 
         for (const auto& name : k_ui_render_target_names) {
-            if (auto rt = API::RenderTargetPoolHook::get_render_target(name); rt != nullptr) {
+            if (auto rt = API::RenderTargetPoolHook::get_render_target(name.c_str()); rt != nullptr) {
                 if (m_last_ui_target_name != name) {
                     m_last_ui_target_name = name;
                     API::get()->log_info("FF7Plugin: Using UI render target '%ls'", name.c_str());
