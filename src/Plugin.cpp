@@ -230,6 +230,7 @@ public:
 
         m_cvars.r_InGameUI_FixedHeight = console->find_variable(L"r.InGameUI.FixedHeight");
         m_cvars.r_InGameUI_FixedWidth = console->find_variable(L"r.InGameUI.FixedWidth");
+        m_cvars.slate_draw_to_vr_render_target = console->find_variable(L"Slate.DrawToVRRenderTarget");
         m_cvars.initialized = m_cvars.r_InGameUI_FixedHeight != nullptr && 
                               m_cvars.r_InGameUI_FixedWidth != nullptr;
 
@@ -263,6 +264,11 @@ public:
                 m_cvars.dirty = true;
             }
 
+            if (m_cvars.slate_draw_to_vr_render_target != nullptr && m_cvars.slate_draw_to_vr_render_target->get_int() != 1) {
+                m_cvars.slate_draw_to_vr_render_target->set(1);
+                m_cvars.dirty_slate = true;
+            }
+
             if (m_system_resolution != nullptr) {
                 m_system_resolution[0] = vr->get_hmd_width() * 2;
                 m_system_resolution[1] = vr->get_hmd_height();
@@ -272,6 +278,11 @@ public:
                 m_cvars.r_InGameUI_FixedWidth->set(0);
                 m_cvars.r_InGameUI_FixedHeight->set(0);
                 m_cvars.dirty = false;
+            }
+
+            if (m_cvars.dirty_slate && m_cvars.slate_draw_to_vr_render_target != nullptr) {
+                m_cvars.slate_draw_to_vr_render_target->set(0);
+                m_cvars.dirty_slate = false;
             }
         }
     }
@@ -358,8 +369,10 @@ private:
     struct {
         bool initialized{false};
         bool dirty{false};
+        bool dirty_slate{false};
         API::IConsoleVariable* r_InGameUI_FixedWidth{nullptr};
         API::IConsoleVariable* r_InGameUI_FixedHeight{nullptr};
+        API::IConsoleVariable* slate_draw_to_vr_render_target{nullptr};
     } m_cvars{};
 
     int32_t* m_system_resolution{nullptr};
