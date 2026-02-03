@@ -310,9 +310,7 @@ public:
             API::get()->log_info("FF7Plugin: on_pre_slate_draw_window");
         }
 
-        if (is_menu_active()) {
-            log_menu_render_targets_once();
-        }
+        log_menu_render_targets_once();
 
         auto rt = find_ui_render_target();
 
@@ -474,15 +472,6 @@ private:
             }
 
             const auto name = obj->get_full_name();
-            if (name.find(L"Menu") == std::wstring::npos &&
-                name.find(L"UI") == std::wstring::npos &&
-                name.find(L"Slate") == std::wstring::npos &&
-                name.find(L"Render") == std::wstring::npos &&
-                name.find(L"Widget") == std::wstring::npos &&
-                name.find(L"InGame") == std::wstring::npos) {
-                continue;
-            }
-
             API::get()->log_info("FF7Plugin: RT2D %ls (%dx%d)", name.c_str(), *size_x, *size_y);
             if (++logged >= 40) {
                 break;
