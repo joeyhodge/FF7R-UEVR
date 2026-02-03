@@ -1,6 +1,7 @@
 #include <optional>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_sinks.h>
 
@@ -309,6 +310,10 @@ public:
             API::get()->log_info("FF7Plugin: on_pre_slate_draw_window");
         }
 
+        if (is_menu_active()) {
+            log_menu_render_targets_once();
+        }
+
         auto rt = find_ui_render_target();
 
         if (rt != nullptr) {
@@ -398,6 +403,92 @@ private:
     std::wstring m_last_ui_target_name{};
     bool m_logged_pre_viewport{false};
     bool m_logged_pre_slate{false};
+    bool m_logged_menu_rts{false};
+
+    struct MenuClasses {
+        API::UClass* main_menu{nullptr};
+        API::UClass* main_menu_window{nullptr};
+        API::UClass* title_menu{nullptr};
+        API::UClass* title_menu_window{nullptr};
+        bool initialized{false};
+    } m_menu_classes{};
+
+    void init_menu_classes() {
+        if (m_menu_classes.initialized) {
+            return;
+        }
+
+        m_menu_classes.main_menu = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndMainMenu");
+        m_menu_classes.main_menu_window = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndMainMenuWindow");
+        m_menu_classes.title_menu = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndTitleMenu");
+        m_menu_classes.title_menu_window = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndTitleMenuWindow");
+        m_menu_classes.initialized = true;
+    }
+
+    bool is_menu_active() {
+        init_menu_classes();
+
+        auto has_instances = [](API::UClass* cls) -> bool {
+            if (cls == nullptr) {
+                return false;
+            }
+            const auto objects = cls->get_objects_matching(false);
+            return !objects.empty();
+        };
+
+        return has_instances(m_menu_classes.main_menu) ||
+               has_instances(m_menu_classes.main_menu_window) ||
+               has_instances(m_menu_classes.title_menu) ||
+               has_instances(m_menu_classes.title_menu_window);
+    }
+
+    void log_menu_render_targets_once() {
+        if (m_logged_menu_rts) {
+            return;
+        }
+
+        m_logged_menu_rts = true;
+
+        auto cls = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.TextureRenderTarget2D");
+        if (cls == nullptr) {
+            API::get()->log_info("FF7Plugin: TextureRenderTarget2D class not found");
+            return;
+        }
+
+        const auto objects = cls->get_objects_matching(false);
+        int logged = 0;
+
+        for (auto* obj : objects) {
+            if (obj == nullptr) {
+                continue;
+            }
+
+            auto size_x = obj->get_property_data<int>(L"SizeX");
+            auto size_y = obj->get_property_data<int>(L"SizeY");
+            if (size_x == nullptr || size_y == nullptr) {
+                continue;
+            }
+
+            if (*size_x < 256 || *size_y < 256) {
+                continue;
+            }
+
+            const auto name = obj->get_full_name();
+            if (name.find(L"Menu") == std::wstring::npos &&
+                name.find(L"UI") == std::wstring::npos &&
+                name.find(L"Slate") == std::wstring::npos &&
+                name.find(L"Render") == std::wstring::npos &&
+                name.find(L"Widget") == std::wstring::npos &&
+                name.find(L"InGame") == std::wstring::npos) {
+                continue;
+            }
+
+            API::get()->log_info("FF7Plugin: RT2D %ls (%dx%d)", name.c_str(), *size_x, *size_y);
+            if (++logged >= 40) {
+                break;
+            }
+        }
+    }
 
     API::IPooledRenderTarget* find_ui_render_target() {
         static const std::wstring k_ui_render_target_names[] = {
