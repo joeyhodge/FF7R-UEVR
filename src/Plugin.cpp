@@ -1,6 +1,7 @@
 #include <optional>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_sinks.h>
 
@@ -208,10 +209,6 @@ public:
             }
         }
 
-        if (is_d3d11 && m_menu_copy_enabled) {
-            copy_menu_backbuffer_to_ui();
-        }
-
         if (!is_d3d11) {
             if (m_graphics_memory != nullptr) {
                 auto command_queue = (ID3D12CommandQueue*)API::get()->param()->renderer->command_queue;
@@ -247,7 +244,6 @@ public:
 
         const auto vr = API::get()->param()->vr;
         const auto is_hmd_active = vr->is_hmd_active();
-        const auto menu_active = is_menu_active();
 
         if (!m_logged_pre_viewport) {
             m_logged_pre_viewport = true;
@@ -255,26 +251,6 @@ public:
         }
 
         if (is_hmd_active) {
-            if (menu_active) {
-                m_menu_copy_enabled = true;
-
-                if (m_cvars.r_InGameUI_FixedWidth != nullptr && m_cvars.r_InGameUI_FixedWidth->get_int() != 0) {
-                    m_cvars.r_InGameUI_FixedWidth->set(0);
-                }
-
-                if (m_cvars.r_InGameUI_FixedHeight != nullptr && m_cvars.r_InGameUI_FixedHeight->get_int() != 0) {
-                    m_cvars.r_InGameUI_FixedHeight->set(0);
-                }
-
-                if (m_cvars.slate_draw_to_vr_render_target != nullptr && m_cvars.slate_draw_to_vr_render_target->get_int() != 0) {
-                    m_cvars.slate_draw_to_vr_render_target->set(0);
-                }
-
-                return;
-            }
-
-            m_menu_copy_enabled = false;
-
             const auto w = (int32_t)vr->get_ui_width();
             const auto h = (int32_t)vr->get_ui_height();
 
@@ -305,8 +281,6 @@ public:
                 m_system_resolution[1] = vr->get_hmd_height();
             }
         } else {
-            m_menu_copy_enabled = false;
-
             if (m_cvars.dirty) {
                 if (m_cvars.r_InGameUI_FixedWidth != nullptr && m_cvars.r_InGameUI_FixedHeight != nullptr) {
                     m_cvars.r_InGameUI_FixedWidth->set(0);
@@ -336,12 +310,7 @@ public:
             API::get()->log_info("FF7Plugin: on_pre_slate_draw_window");
         }
 
-        if (is_menu_active()) {
-            m_menu_copy_enabled = true;
-            return;
-        }
-
-        m_menu_copy_enabled = false;
+        log_menu_render_targets_once();
 
         auto rt = find_ui_render_target();
 
@@ -351,93 +320,6 @@ public:
             m_last_engine_ui_tex = nullptr;
             m_last_engine_ui_srt = nullptr;
         }
-    }
-
-    void copy_menu_backbuffer_to_ui() {
-        const auto renderer = API::get()->param()->renderer;
-        const auto vr = API::get()->param()->vr;
-        if (renderer == nullptr || vr == nullptr || !vr->is_hmd_active()) {
-            return;
-        }
-
-        const auto ui_target = API::StereoHook::get_ui_render_target();
-        if (ui_target == nullptr) {
-            return;
-        }
-
-        auto dst_tex = (ID3D11Texture2D*)ui_target->get_native_resource();
-        if (dst_tex == nullptr) {
-            return;
-        }
-
-        auto swapchain = (IDXGISwapChain*)renderer->swapchain;
-        if (swapchain == nullptr) {
-            return;
-        }
-
-        d3d12::ComPtr<ID3D11Texture2D> backbuffer{};
-        if (FAILED(swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)backbuffer.GetAddressOf()))) {
-            return;
-        }
-
-        auto device = (ID3D11Device*)renderer->device;
-        if (device == nullptr) {
-            return;
-        }
-
-        D3D11_TEXTURE2D_DESC src_desc{};
-        D3D11_TEXTURE2D_DESC dst_desc{};
-        backbuffer->GetDesc(&src_desc);
-        dst_tex->GetDesc(&dst_desc);
-
-        d3d12::ComPtr<ID3D11DeviceContext> context{};
-        device->GetImmediateContext(&context);
-
-        const float clear_color[4]{0.0f, 0.0f, 0.0f, 0.0f};
-        clear_d3d11_rt(device, dst_tex, clear_color, dst_desc.Format);
-
-        if (src_desc.Width == dst_desc.Width && src_desc.Height == dst_desc.Height) {
-            context->CopyResource(dst_tex, backbuffer.Get());
-            return;
-        }
-
-        const float src_aspect = src_desc.Height > 0 ? (float)src_desc.Width / (float)src_desc.Height : 1.0f;
-        const float dst_aspect = dst_desc.Height > 0 ? (float)dst_desc.Width / (float)dst_desc.Height : 1.0f;
-
-        UINT copy_w = dst_desc.Width;
-        UINT copy_h = dst_desc.Height;
-        UINT src_x = 0;
-        UINT src_y = 0;
-
-        if (src_aspect > dst_aspect) {
-            copy_w = (UINT)((float)src_desc.Height * dst_aspect);
-            copy_h = src_desc.Height;
-            src_x = (src_desc.Width > copy_w) ? (src_desc.Width - copy_w) / 2 : 0;
-        } else {
-            copy_w = src_desc.Width;
-            copy_h = (UINT)((float)src_desc.Width / dst_aspect);
-            src_y = (src_desc.Height > copy_h) ? (src_desc.Height - copy_h) / 2 : 0;
-        }
-
-        if (copy_w > dst_desc.Width) {
-            copy_w = dst_desc.Width;
-        }
-        if (copy_h > dst_desc.Height) {
-            copy_h = dst_desc.Height;
-        }
-
-        const UINT dst_x = (dst_desc.Width > copy_w) ? (dst_desc.Width - copy_w) / 2 : 0;
-        const UINT dst_y = (dst_desc.Height > copy_h) ? (dst_desc.Height - copy_h) / 2 : 0;
-
-        D3D11_BOX src_box{};
-        src_box.left = src_x;
-        src_box.top = src_y;
-        src_box.front = 0;
-        src_box.right = src_x + copy_w;
-        src_box.bottom = src_y + copy_h;
-        src_box.back = 1;
-
-        context->CopySubresourceRegion(dst_tex, 0, dst_x, dst_y, 0, backbuffer.Get(), 0, &src_box);
     }
 
     void replace_ingame_ui_render_target(API::IPooledRenderTarget* rtb) {
@@ -519,94 +401,25 @@ private:
     std::wstring m_last_ui_target_name{};
     bool m_logged_pre_viewport{false};
     bool m_logged_pre_slate{false};
-    bool m_menu_copy_enabled{false};
-    bool m_last_menu_state{false};
+    bool m_logged_menu_rts{false};
 
     struct MenuClasses {
-        API::UClass* start_menu{nullptr};
         API::UClass* main_menu{nullptr};
         API::UClass* main_menu_window{nullptr};
         API::UClass* title_menu{nullptr};
         API::UClass* title_menu_window{nullptr};
-        API::UClass* main_menu_base_widget{nullptr};
-        API::UClass* main_menu_top_widget{nullptr};
-        API::UClass* main_menu_item_list_widget{nullptr};
-        API::UClass* startmenu_00_widget{nullptr};
-        API::UClass* startmenu_01_widget{nullptr};
-        API::UClass* dlc_window_widget{nullptr};
         bool initialized{false};
     } m_menu_classes{};
-
-    static API::UClass* find_menu_class(std::initializer_list<const wchar_t*> candidates) {
-        for (const auto* candidate : candidates) {
-            if (candidate == nullptr) {
-                continue;
-            }
-
-            if (auto* cls = API::get()->find_uobject<API::UClass>(candidate); cls != nullptr) {
-                return cls;
-            }
-        }
-
-        return nullptr;
-    }
 
     void init_menu_classes() {
         if (m_menu_classes.initialized) {
             return;
         }
 
-        m_menu_classes.start_menu = find_menu_class({
-            L"Class /Script/EndGame.EndStartMenu",
-        });
-
-        m_menu_classes.main_menu = find_menu_class({
-            L"Class /Script/EndGame.EndMainMenu",
-        });
-
-        m_menu_classes.main_menu_window = find_menu_class({
-            L"Class /Script/EndGame.EndMainMenuWindow",
-        });
-
-        m_menu_classes.title_menu = find_menu_class({
-            L"Class /Script/EndGame.EndTitleMenu",
-        });
-
-        m_menu_classes.title_menu_window = find_menu_class({
-            L"Class /Script/EndGame.EndTitleMenuWindow",
-        });
-
-        // From EndMenuSettings in cooked config. These are explicit title/menu widgets used in FF7R.
-        m_menu_classes.main_menu_base_widget = find_menu_class({
-            L"Class /Game/GameContents/Menu/Resident/MainMenu/MainMenu_Base_Test.MainMenu_Base_Test_C",
-            L"WidgetBlueprintGeneratedClass /Game/GameContents/Menu/Resident/MainMenu/MainMenu_Base_Test.MainMenu_Base_Test_C",
-        });
-
-        m_menu_classes.main_menu_top_widget = find_menu_class({
-            L"Class /Game/GameContents/Menu/Resident/MainMenu/MainMenu_Top_Test.MainMenu_Top_Test_C",
-            L"WidgetBlueprintGeneratedClass /Game/GameContents/Menu/Resident/MainMenu/MainMenu_Top_Test.MainMenu_Top_Test_C",
-        });
-
-        m_menu_classes.main_menu_item_list_widget = find_menu_class({
-            L"Class /Game/GameContents/Menu/Resident/MainMenu/MainMenu_Item_SelectList.MainMenu_Item_SelectList_C",
-            L"WidgetBlueprintGeneratedClass /Game/GameContents/Menu/Resident/MainMenu/MainMenu_Item_SelectList.MainMenu_Item_SelectList_C",
-        });
-
-        m_menu_classes.startmenu_00_widget = find_menu_class({
-            L"Class /Game/GameContents/Menu/GameTitle/Startmenu_00.Startmenu_00_C",
-            L"WidgetBlueprintGeneratedClass /Game/GameContents/Menu/GameTitle/Startmenu_00.Startmenu_00_C",
-        });
-
-        m_menu_classes.startmenu_01_widget = find_menu_class({
-            L"Class /Game/GameContents/Menu/GameTitle/Startmenu_01.Startmenu_01_C",
-            L"WidgetBlueprintGeneratedClass /Game/GameContents/Menu/GameTitle/Startmenu_01.Startmenu_01_C",
-        });
-
-        m_menu_classes.dlc_window_widget = find_menu_class({
-            L"Class /Game/GameContents/Menu/GameTitle/DLC_Window.DLC_Window_C",
-            L"WidgetBlueprintGeneratedClass /Game/GameContents/Menu/GameTitle/DLC_Window.DLC_Window_C",
-        });
-
+        m_menu_classes.main_menu = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndMainMenu");
+        m_menu_classes.main_menu_window = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndMainMenuWindow");
+        m_menu_classes.title_menu = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndTitleMenu");
+        m_menu_classes.title_menu_window = API::get()->find_uobject<API::UClass>(L"Class /Script/EndGame.EndTitleMenuWindow");
         m_menu_classes.initialized = true;
     }
 
@@ -621,24 +434,49 @@ private:
             return !objects.empty();
         };
 
-        const bool active = has_instances(m_menu_classes.main_menu) ||
+        return has_instances(m_menu_classes.main_menu) ||
                has_instances(m_menu_classes.main_menu_window) ||
                has_instances(m_menu_classes.title_menu) ||
-               has_instances(m_menu_classes.title_menu_window) ||
-               has_instances(m_menu_classes.start_menu) ||
-               has_instances(m_menu_classes.main_menu_base_widget) ||
-               has_instances(m_menu_classes.main_menu_top_widget) ||
-               has_instances(m_menu_classes.main_menu_item_list_widget) ||
-               has_instances(m_menu_classes.startmenu_00_widget) ||
-               has_instances(m_menu_classes.startmenu_01_widget) ||
-               has_instances(m_menu_classes.dlc_window_widget);
+               has_instances(m_menu_classes.title_menu_window);
+    }
 
-        if (active != m_last_menu_state) {
-            m_last_menu_state = active;
-            API::get()->log_info("FF7Plugin: Menu state changed -> %s", active ? "active" : "inactive");
+    void log_menu_render_targets_once() {
+        if (m_logged_menu_rts) {
+            return;
         }
 
-        return active;
+        m_logged_menu_rts = true;
+
+        auto cls = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.TextureRenderTarget2D");
+        if (cls == nullptr) {
+            API::get()->log_info("FF7Plugin: TextureRenderTarget2D class not found");
+            return;
+        }
+
+        const auto objects = cls->get_objects_matching(false);
+        int logged = 0;
+
+        for (auto* obj : objects) {
+            if (obj == nullptr) {
+                continue;
+            }
+
+            auto size_x = obj->get_property_data<int>(L"SizeX");
+            auto size_y = obj->get_property_data<int>(L"SizeY");
+            if (size_x == nullptr || size_y == nullptr) {
+                continue;
+            }
+
+            if (*size_x < 256 || *size_y < 256) {
+                continue;
+            }
+
+            const auto name = obj->get_full_name();
+            API::get()->log_info("FF7Plugin: RT2D %ls (%dx%d)", name.c_str(), *size_x, *size_y);
+            if (++logged >= 40) {
+                break;
+            }
+        }
     }
 
     API::IPooledRenderTarget* find_ui_render_target() {
